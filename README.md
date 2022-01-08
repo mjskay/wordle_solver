@@ -37,8 +37,8 @@ I’m going to take a pretty simple approach:
     1.  The expected number of letters in the word in the correct
         position, given the remaining possible words.
 
-    2.  The expected number of unique letters anywhere in the word,
-        given the remaining possible words.
+    2.  The expected number of unique correct letters anywhere in the
+        word, given the remaining possible words.
 
 -   We’ll calculate these expectations assuming the words chosen by
     Wordle follow some distribution based on word frequencies in the
