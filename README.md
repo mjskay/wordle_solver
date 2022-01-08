@@ -253,7 +253,11 @@ play_against = function(word, first_guess = NULL, silent = FALSE, ...) {
   
   game$attempts
 }
+```
 
+Let’s try it out:
+
+``` r
 play_against("slump")
 ```
 
@@ -262,6 +266,11 @@ play_against("slump")
     ## [38;5;232m[48;5;46m s [48;5;46m l [48;5;46m u [48;5;46m m [48;5;46m p [39m[49m
 
     ## [1] "tares" "soily" "slump"
+
+(This doesn’t seem to render properly in Github markdown, so here’s a
+screenshot:)
+
+![](solve_slump.png)
 
 Not bad!
 

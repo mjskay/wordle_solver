@@ -218,9 +218,17 @@ play_against = function(word, first_guess = NULL, silent = FALSE, ...) {
   
   game$attempts
 }
+```
 
+Let's try it out:
+
+```{r}
 play_against("slump")
 ```
+
+(This doesn't seem to render properly in Github markdown, so here's a screenshot:)
+
+![](solve_slump.png)
 
 Not bad!
 
