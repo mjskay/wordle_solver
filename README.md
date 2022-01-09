@@ -220,7 +220,12 @@ score_words = function(helper, weight = 0.5, freq_table = english_log_freq_table
   # if we have at least three similar "top" contenders according to equal_score
   # "explore" for one round (this is off by default, we'll get to it later...)
   sorted_equal_score = sort(equal_score, decreasing = TRUE)
-  if (isTRUE(sorted_equal_score[1] / sorted_equal_score[3] < explore_threshold)) weight = 0
+  if (
+    isTRUE(sorted_equal_score[1] / sorted_equal_score[3] < explore_threshold)
+    && any(in_score > 0)
+  ) {
+    weight = 0
+  }
   
   tibble(words = guess_words, equal_score, in_score, score = weight*equal_score + (1 - weight)*in_score) %>%
     arrange(-score)
