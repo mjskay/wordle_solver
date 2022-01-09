@@ -216,28 +216,17 @@ So it suggests "tares" as a first word to try. Let's play against a particular w
 and see how many steps it takes to get it:
 
 ```{r}
-game_try = function(game, guess, silent = FALSE) {
-  # version of WordleGame$try() that can optionally run without output
-  if (silent) {
-    void = NULL
-    void_con = sink(textConnection("void", "w", local = TRUE))
-    on.exit(close(void_con))
-    on.exit(sink())
-  }
-  game$try(guess)
-}
-
-play_against = function(word, first_guess = NULL, silent = FALSE, ...) {
+play_against = function(word, first_guess = NULL, quiet = FALSE, ...) {
   helper = WordleHelper$new(nchar = nchar(word))
   game = WordleGame$new(helper$words, target_word = word)
   
   if (!is.null(first_guess)) {
-    helper$update(first_guess, game_try(game, first_guess, silent))
+    helper$update(first_guess, game$try(first_guess, quiet = quiet))
   }
   
   while (!game$is_solved()) {
     guess = score_words(helper, ...)$words[[1]]
-    helper$update(guess, game_try(game, guess, silent))
+    helper$update(guess, game$try(guess, quiet = quiet))
   }
   
   game$attempts
@@ -280,7 +269,7 @@ strategy_steps =
           length(play_against(
             word, first_guess = first_guess, 
             weight = weight, freq_table = freq_table,
-            silent = TRUE
+            quiet = TRUE
           )),
           error = function(e) NA
         )
@@ -404,7 +393,7 @@ explore_steps =
         length(play_against(
           word, first_guess = first_guess,
           explore_threshold = 1.01, guess_words = wordle_dict,
-          silent = TRUE
+          quiet = TRUE
         )),
         error = function(e) NA
       )

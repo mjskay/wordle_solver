@@ -253,28 +253,17 @@ So it suggests “tares” as a first word to try. Let’s play against a
 particular word and see how many steps it takes to get it:
 
 ``` r
-game_try = function(game, guess, silent = FALSE) {
-  # version of WordleGame$try() that can optionally run without output
-  if (silent) {
-    void = NULL
-    void_con = sink(textConnection("void", "w", local = TRUE))
-    on.exit(close(void_con))
-    on.exit(sink())
-  }
-  game$try(guess)
-}
-
-play_against = function(word, first_guess = NULL, silent = FALSE, ...) {
+play_against = function(word, first_guess = NULL, quiet = FALSE, ...) {
   helper = WordleHelper$new(nchar = nchar(word))
   game = WordleGame$new(helper$words, target_word = word)
   
   if (!is.null(first_guess)) {
-    helper$update(first_guess, game_try(game, first_guess, silent))
+    helper$update(first_guess, game$try(first_guess, quiet = quiet))
   }
   
   while (!game$is_solved()) {
     guess = score_words(helper, ...)$words[[1]]
-    helper$update(guess, game_try(game, guess, silent))
+    helper$update(guess, game$try(guess, quiet = quiet))
   }
   
   game$attempts
@@ -287,9 +276,9 @@ Let’s try it out:
 play_against("slump")
 ```
 
-    ## [38;5;232m[48;5;249m t [48;5;249m a [48;5;249m r [48;5;249m e [48;5;226m s [39m[49m 
-    ## [38;5;232m[48;5;46m s [48;5;249m o [48;5;249m i [48;5;226m l [48;5;249m y [39m[49m 
-    ## [38;5;232m[48;5;46m s [48;5;46m l [48;5;46m u [48;5;46m m [48;5;46m p [39m[49m
+    ## [38;5;232m[48;5;249m t [48;5;249m a [48;5;249m r [48;5;249m e [48;5;226m s [39m[49m 
+    ## [38;5;232m[48;5;46m s [48;5;249m o [48;5;249m i [48;5;226m l [48;5;249m y [39m[49m 
+    ## [38;5;232m[48;5;46m s [48;5;46m l [48;5;46m u [48;5;46m m [48;5;46m p [39m[49m
 
     ## [1] "tares" "soily" "slump"
 
@@ -321,7 +310,7 @@ strategy_steps =
           length(play_against(
             word, first_guess = first_guess, 
             weight = weight, freq_table = freq_table,
-            silent = TRUE
+            quiet = TRUE
           )),
           error = function(e) NA
         )
@@ -432,15 +421,15 @@ Let’s look at “hatch”:
 play_against("hatch")
 ```
 
-    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
-    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m m [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m p [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m b [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m l [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
+    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
+    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m m [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m p [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m b [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m l [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
 
     ## [1] "tares" "natch" "watch" "match" "patch" "batch" "latch" "catch" "hatch"
 
@@ -458,12 +447,12 @@ potential “atch” words in a single guess:
 play_against("hatch", explore_threshold = 1.01, guess_words = wordle_dict)
 ```
 
-    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
-    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m b [48;5;249m l [48;5;249m i [48;5;249m m [48;5;249m p [39m[49m 
-    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
-    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
+    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
+    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m b [48;5;249m l [48;5;249m i [48;5;249m m [48;5;249m p [39m[49m 
+    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
 
     ## [1] "tares" "natch" "blimp" "watch" "catch" "hatch"
 
@@ -483,7 +472,7 @@ explore_steps =
         length(play_against(
           word, first_guess = first_guess,
           explore_threshold = 1.01, guess_words = wordle_dict,
-          silent = TRUE
+          quiet = TRUE
         )),
         error = function(e) NA
       )
