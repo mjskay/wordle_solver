@@ -34,15 +34,21 @@ I’m going to take a pretty simple approach:
 -   We’ll score words based on two things (essentially based on the
     green and yellow squares Wordle gives as feedback):
 
-    1.  The expected number of letters in the word in the correct
-        position, given the remaining possible words.
+    1.  `equal_score`: The expected number of letters in the word in the
+        correct position, given the remaining possible words.
 
-    2.  The expected number of unique correct letters anywhere in the
-        word, given the remaining possible words.
+    2.  `in_score`: The expected number of **new** letters found
+        anywhere in the word, given the remaining possible words. In a
+        previous version this was just the expected number of letters
+        founds anywhere in the word, but I updated this heuristic to
+        only look for new letters to promote exploration.
 
 -   We’ll calculate these expectations assuming the words chosen by
     Wordle follow some distribution based on word frequencies in the
     English language (though actually we’ll check this too!).
+
+-   We’ll also (later) introduce a heuristic for picking between these
+    two scores when needed.
 
 ## Getting a word frequency distribution
 
@@ -170,12 +176,12 @@ names(english_log_freq_table) = freq$word
 Here’s a relatively naive scoring function for possible guesses. It
 looks at every possible word and scores it according to a weighted sum
 of two expectations: the expected number of letters in the correct
-position and the expected number of unique letters in the word at all.
-It calculates expectations over a provided frequency distribution of
-possible words.
+position and the expected number of new letters discovered to be in the
+word (i.e. letters that weren’t already known about). It calculates
+expectations over a provided frequency distribution of possible words.
 
 ``` r
-score_words = function(helper, weight = 0.5, freq_table = english_log_freq_table) {
+score_words = function(helper, weight = 0.5, freq_table = english_log_freq_table, guess_words = NULL, explore_threshold = NA) {
   words = helper$words
   
   # get word frequencies
@@ -186,17 +192,37 @@ score_words = function(helper, weight = 0.5, freq_table = english_log_freq_table
   }
   word_freq = word_freq / sum(word_freq)
 
-  # first part of score: expected number of letters in the correct position
+  # matrix of letters in each word
   word_letters = strsplit(words, "")
   word_letters_matrix = simplify2array(word_letters)
-  equal_score = vapply(word_letters, \(w) sum(colSums(w == word_letters_matrix) * word_freq), numeric(1))
   
-  # second part of score: expected number of unique letters in the word at all
-  word_letters_mask = lapply(word_letters, \(w) letters %in% w)
-  word_letters_mask_matrix = simplify2array(word_letters_mask)
-  in_score = colSums((word_freq * t(word_letters_mask_matrix)) %*% word_letters_mask_matrix)
+  # words to be used for guessing --- if not provided, assume we're doing "hard mode";
+  # i.e. can only guess from the remaining possible words
+  if (is.null(guess_words)) {
+    guess_words = words
+    guess_word_letters = word_letters
+    guess_word_letters_matrix = word_letters_matrix
+  } else {
+    guess_word_letters = strsplit(guess_words, "")
+    guess_word_letters_matrix = simplify2array(guess_word_letters)
+  }
   
-  tibble(words, equal_score, in_score, score = weight*equal_score + (1 - weight)*in_score) %>%
+  # first part of score: expected number of letters in the correct position
+  equal_score = vapply(guess_word_letters, \(w) sum(colSums(w == word_letters_matrix) * word_freq), numeric(1))
+  
+  # second part of score: expected number of new letters discovered to be in the word
+  known_letters = union(unlist(strsplit(helper$wrong_spot, "")), helper$exact)
+  unknown_letters = setdiff(letters, known_letters)
+  word_letters_mask_matrix = vapply(word_letters, \(w) unknown_letters %in% w, logical(length(unknown_letters)))
+  guess_word_letters_mask_matrix = vapply(guess_word_letters, \(w) unknown_letters %in% w, logical(length(unknown_letters)))
+  in_score = colSums((word_freq * t(word_letters_mask_matrix)) %*% guess_word_letters_mask_matrix)
+
+  # if we have at least three similar "top" contenders according to equal_score
+  # "explore" for one round (this is off by default, we'll get to it later...)
+  sorted_equal_score = sort(equal_score, decreasing = TRUE)
+  if (isTRUE(sorted_equal_score[1] / sorted_equal_score[3] < explore_threshold)) weight = 0
+  
+  tibble(words = guess_words, equal_score, in_score, score = weight*equal_score + (1 - weight)*in_score) %>%
     arrange(-score)
 }
 ```
@@ -205,7 +231,7 @@ For example, we can ask it for an initial guess by scoring all possible
 words given that we have made no guesses so far:
 
 ``` r
-score_words(helper)
+score_words(helper, guess_words = wordle_dict)
 ```
 
     ## # A tibble: 12,972 x 4
@@ -329,8 +355,168 @@ strategy_steps %>%
 It seems like an equal weight between both expectations (using the log
 frequency table) is not too shabby.
 
-We could use `optim()` to find a more accurate value for `weight` but
-honestly this seems fine. We could also try more complex strategies
-(e.g. looking more than one choice ahead)—but hey, this simple approach
-gives an expected number of steps of less than 4, which seems pretty
-good to me!
+Looking in more detail at the distribution of numbers of steps when
+`weight == 0.5`, it looks like using the log frequency weighting only
+offers a very slight improvement overall:
+
+``` r
+strategy_steps %>%
+  mutate(table = forcats::fct_recode(table,
+    "English frequency" = "freq",
+    "log(English frequency)" = "log_freq"
+  )) %>%
+  filter(weight == 0.5) %>%
+  ggplot(aes(x = steps, color = table)) +
+  geom_freqpoly(binwidth = 1, na.rm = TRUE) +
+  scale_x_continuous(breaks = 1:10)
+```
+
+<img src="README_files/figure-gfm/freq_strategy_comparisons-1.png" width="672" />
+
+One thing that is problematic is that there remain some words that
+require more than 6 guesses (which is a “loss” in Wordle). Let’s see if
+we can fix that…
+
+## Allowing “exploration” as needed on Easy Mode
+
+Wordle’s default “easy mode” allows you to guess words that don’t
+contain the letters you’ve found so far. The solver by default plays on
+“hard mode”, but we can let it play on “easy mode” by tweaking two
+parameters:
+
+-   Setting `guess_words` determines the dictionary used for guesses. By
+    default the remaining possible words are used (i.e. the words
+    containing the letters found so far). By setting `guess_words` to
+    the full dictionary (`wordle::wordle_dict`), we can allow the solver
+    to guess any word in any round.
+
+-   Setting `explore_threshold` to a value greater than 1 will allow the
+    solver to trigger the “explore” mode. In a given round, if the ratio
+    of `equal_score` (the expected number of correct letters) between
+    the highest-ranked guess according to `equal_score` and the
+    third-highest-ranked guess is less than `explore_threshold`, then
+    `equal_score` is ignored and `in_score` (the expected number of new
+    letters found) is used by itself for that round. The idea here is
+    that if the top three words all have similar likelihood of being
+    correct, it’s better to try a different, single word that might
+    distinguish between those three (taking two rounds: the
+    “exploration” guess plus guessing the remaining word) than needing
+    to guess all three words. I’ve found a value of `1.01` words well
+    for this parameter, but haven’t played with it deeply.
+
+You can see the difference by picking one of the particularly bad words
+from “hard mode”. For example:
+
+``` r
+strategy_steps %>%
+  filter(weight == 0.5, table == "log_freq") %>%
+  arrange(-steps) %>%
+  head(10)
+```
+
+    ##       table  word weight steps
+    ## 1  log_freq hatch    0.5     9
+    ## 2  log_freq surer    0.5     7
+    ## 3  log_freq evade    0.5     6
+    ## 4  log_freq stool    0.5     6
+    ## 5  log_freq floss    0.5     6
+    ## 6  log_freq unfed    0.5     6
+    ## 7  log_freq booby    0.5     6
+    ## 8  log_freq crass    0.5     6
+    ## 9  log_freq wooer    0.5     6
+    ## 10 log_freq parry    0.5     6
+
+Let’s look at “hatch”:
+
+``` r
+play_against("hatch")
+```
+
+    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
+    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m m [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m p [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m b [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m l [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
+
+    ## [1] "tares" "natch" "watch" "match" "patch" "batch" "latch" "catch" "hatch"
+
+![](solve_hatch.png)
+
+The solver does a poor job, because it is stuck guessing words that end
+in “atch”, and the solution (“hatch”) happens to be rarer than most of
+the other words ending in “atch”, so they are chosen first.
+
+By allowing the solver to dynamically “explore” when it has a set of
+similarly-likely candidate guesses, it is able to eliminate a bunch of
+potential “atch” words in a single guess:
+
+``` r
+play_against("hatch", explore_threshold = 1.01, guess_words = wordle_dict)
+```
+
+    ## [38;5;232m[48;5;226m t [48;5;46m a [48;5;249m r [48;5;249m e [48;5;249m s [39m[49m 
+    ## [38;5;232m[48;5;249m n [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m b [48;5;249m l [48;5;249m i [48;5;249m m [48;5;249m p [39m[49m 
+    ## [38;5;232m[48;5;249m w [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;249m c [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m 
+    ## [38;5;232m[48;5;46m h [48;5;46m a [48;5;46m t [48;5;46m c [48;5;46m h [39m[49m
+
+    ## [1] "tares" "natch" "blimp" "watch" "catch" "hatch"
+
+![](solve_hatch_explore.png)
+
+We can run this approach against the past answers…
+
+``` r
+helper = WordleHelper$new(nchar = 5)
+first_guess = score_words(helper, explore_threshold = 1.01, guess_words = wordle_dict)$words[[1]]
+explore_steps = 
+  map_dfr(past_answers, \(word) {
+    cat("Scoring word ", word, "\n")
+    data.frame(
+      word, 
+      steps = tryCatch(
+        length(play_against(
+          word, first_guess = first_guess,
+          explore_threshold = 1.01, guess_words = wordle_dict,
+          silent = TRUE
+        )),
+        error = function(e) NA
+      )
+    )
+  })
+```
+
+… and see how the “easy mode” approach with exploration compares to the
+“hard mode” approach:
+
+``` r
+strategy_steps %>%
+  filter(table == "log_freq", weight == 0.5) %>%
+  mutate(hard_mode = TRUE) %>%
+  bind_rows(mutate(explore_steps, hard_mode = FALSE)) %>%
+  ggplot(aes(y = hard_mode, x = steps, fill = stat(x > 6.5))) +
+  ggdist::stat_histinterval(
+    breaks = 2:20/2 - 0.25, 
+    show_interval = FALSE,
+    scale = 0.85
+  ) +
+  scale_x_continuous(breaks = 1:10) +
+  labs(
+    title = "Performance of the solver on hard mode or not",
+    subtitle = "Hard mode = guesses must contain known letters",
+    y = "Hard mode?",
+    x = "Steps needed to find solution",
+    fill = "Failed?\n(> 6 steps)"
+  ) +
+  scale_fill_brewer(palette = "Set2")
+```
+
+<img src="README_files/figure-gfm/hard_vs_easy_mode-1.png" width="672" />
+
+Very similar overall, except we got rid of those pesky \> 6 step
+solutions!
